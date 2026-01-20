@@ -25,19 +25,29 @@
             display: flex;
             align-items: center;
             height: 35px;
+            overflow-x: auto;
         }
 
         .tab {
-            background-color: #2d2d2d;
+            background-color: #252526;
             color: #cccccc;
             padding: 8px 16px;
             font-size: 13px;
             border-right: 1px solid #1e1e1e;
             cursor: pointer;
             position: relative;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
-        .tab::after {
+        .tab.active {
+            background-color: #2d2d2d;
+        }
+
+        .tab.active::after {
             content: '';
             position: absolute;
             bottom: 0;
@@ -47,6 +57,22 @@
             background-color: #4CAF50;
         }
 
+        .tab:hover {
+            background-color: #2a2a2a;
+        }
+
+        .tab-close {
+            font-size: 16px;
+            line-height: 1;
+            padding: 0 4px;
+            margin-left: 4px;
+            border-radius: 3px;
+        }
+
+        .tab-close:hover {
+            background-color: #3a3a3a;
+        }
+
         #container {
             width: 100%;
             height: calc(100vh - 35px);
@@ -54,13 +80,21 @@
     </style>
 </head>
 <body>
-    <div class="tab-bar">
-        <div class="tab">Main Tab</div>
+    <div class="tab-bar" id="tabBar">
+        <div class="tab active" data-tab-id="0">
+            <span>Main Tab</span>
+            <span class="tab-close" onclick="closeTab(0, event)">×</span>
+        </div>
     </div>
     <div id="container"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
     <script>
+        let tabs = [];
+        let activeTabId = 0;
+        let tabCounter = 1;
+        let editors = {};
+
         require.config({ 
             paths: { 
                 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' 
@@ -143,9 +177,26 @@
                 }
             });
 
-            // Create editor instance
+            // Initialize first tab
+            tabs.push({
+                id: 0,
+                name: 'Main Tab',
+                content: ''
+            });
+
+            // Create initial editor
+            createEditor(0, '');
+
+            window.addEventListener('resize', () => {
+                if (editors[activeTabId]) {
+                    editors[activeTabId].layout();
+                }
+            });
+        });
+
+        function createEditor(tabId, content) {
             const editor = monaco.editor.create(document.getElementById('container'), {
-                value: '',
+                value: content || '',
                 language: 'lua',
                 theme: 'CustomDark',
                 folding: false,
@@ -174,12 +225,153 @@
             });
 
             editor.getModel().updateOptions({ insertSpaces: false });
+            editors[tabId] = editor;
+            return editor;
+        }
 
-            // Handle window resize
-            window.addEventListener('resize', () => {
-                editor.layout();
+        // Functions to be called from WinForms
+        function AddTab(tabName) {
+            const tabId = tabCounter++;
+            tabs.push({
+                id: tabId,
+                name: tabName || `Tab ${tabId}`,
+                content: ''
             });
-        });
+
+            const tabBar = document.getElementById('tabBar');
+            const tabElement = document.createElement('div');
+            tabElement.className = 'tab';
+            tabElement.setAttribute('data-tab-id', tabId);
+            tabElement.innerHTML = `
+                <span>${tabName || `Tab ${tabId}`}</span>
+                <span class="tab-close" onclick="closeTab(${tabId}, event)">×</span>
+            `;
+            tabElement.onclick = function(e) {
+                if (!e.target.classList.contains('tab-close')) {
+                    switchTab(tabId);
+                }
+            };
+            tabBar.appendChild(tabElement);
+
+            switchTab(tabId);
+            return tabId;
+        }
+
+        function closeTab(tabId, event) {
+            if (event) {
+                event.stopPropagation();
+            }
+
+            // Don't close if it's the last tab
+            if (tabs.length === 1) {
+                return;
+            }
+
+            const tabIndex = tabs.findIndex(t => t.id === tabId);
+            if (tabIndex === -1) return;
+
+            // Remove tab from array
+            tabs.splice(tabIndex, 1);
+
+            // Remove tab element
+            const tabElement = document.querySelector(`[data-tab-id="${tabId}"]`);
+            if (tabElement) {
+                tabElement.remove();
+            }
+
+            // Dispose editor
+            if (editors[tabId]) {
+                editors[tabId].dispose();
+                delete editors[tabId];
+            }
+
+            // Switch to another tab if the closed tab was active
+            if (activeTabId === tabId) {
+                const newActiveTab = tabs[Math.max(0, tabIndex - 1)];
+                switchTab(newActiveTab.id);
+            }
+        }
+
+        function CloseTab(tabId) {
+            closeTab(tabId);
+        }
+
+        function switchTab(tabId) {
+            // Save current tab content
+            if (editors[activeTabId]) {
+                const currentTab = tabs.find(t => t.id === activeTabId);
+                if (currentTab) {
+                    currentTab.content = editors[activeTabId].getValue();
+                }
+                // Hide current editor
+                editors[activeTabId].getDomNode().style.display = 'none';
+            }
+
+            // Update active tab
+            activeTabId = tabId;
+
+            // Update tab styles
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            const activeTabElement = document.querySelector(`[data-tab-id="${tabId}"]`);
+            if (activeTabElement) {
+                activeTabElement.classList.add('active');
+            }
+
+            // Show or create editor for new tab
+            if (!editors[tabId]) {
+                const tab = tabs.find(t => t.id === tabId);
+                createEditor(tabId, tab ? tab.content : '');
+            } else {
+                editors[tabId].getDomNode().style.display = 'block';
+                editors[tabId].layout();
+            }
+        }
+
+        function SwitchTab(tabId) {
+            switchTab(tabId);
+        }
+
+        function GetText(tabId) {
+            const targetTabId = tabId !== undefined ? tabId : activeTabId;
+            if (editors[targetTabId]) {
+                return editors[targetTabId].getValue();
+            }
+            const tab = tabs.find(t => t.id === targetTabId);
+            return tab ? tab.content : '';
+        }
+
+        function SetText(text, tabId) {
+            const targetTabId = tabId !== undefined ? tabId : activeTabId;
+            if (editors[targetTabId]) {
+                editors[targetTabId].setValue(text);
+            } else {
+                const tab = tabs.find(t => t.id === targetTabId);
+                if (tab) {
+                    tab.content = text;
+                }
+            }
+        }
+
+        function GetActiveTabId() {
+            return activeTabId;
+        }
+
+        function GetAllTabs() {
+            return tabs.map(t => ({ id: t.id, name: t.name }));
+        }
+
+        function RenameTab(tabId, newName) {
+            const tab = tabs.find(t => t.id === tabId);
+            if (tab) {
+                tab.name = newName;
+                const tabElement = document.querySelector(`[data-tab-id="${tabId}"] span:first-child`);
+                if (tabElement) {
+                    tabElement.textContent = newName;
+                }
+            }
+        }
     </script>
 </body>
 </html>
